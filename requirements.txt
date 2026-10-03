@@ -1,0 +1,28 @@
+# AI-Based Firefighter Assistance System
+# Verified against Python 3.12 and 3.13.
+#
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+
+# --- web interface and image handling (both versions, every platform) ---
+Flask>=3.1.0
+numpy>=2.1.0          # 2.1 is the first release with Python 3.13 wheels
+Pillow>=11.0.0        # 11.0 is the first release with Python 3.13 wheels
+
+# --- thermal camera, MLX90640 over I2C (Raspberry Pi only) ---
+# Leave these out when you only want to run with --simulate on a laptop.
+adafruit-blinka>=8.50.0; platform_machine == "aarch64" or platform_machine == "armv7l"
+adafruit-circuitpython-mlx90640>=1.3.1; platform_machine == "aarch64" or platform_machine == "armv7l"
+
+# --- Firebase remote control, version 3 and remote_control.py ---
+# Pure Python plus grpcio; 6.6 is the first release that installs cleanly on
+# Python 3.13. Needed on the Pi and on the computer you control it from.
+firebase-admin>=6.6.0
+
+# --- flame and gas sensor GPIO, version 2 only (Raspberry Pi only) ---
+# RPi.GPIO does NOT work on the Raspberry Pi 5. gpiozero drives the pins
+# through lgpio instead. If pip cannot build lgpio, install the system
+# package instead:  sudo apt install python3-lgpio
+gpiozero>=2.0.1; platform_machine == "aarch64" or platform_machine == "armv7l"
+lgpio>=0.2.2.0; platform_machine == "aarch64" or platform_machine == "armv7l"

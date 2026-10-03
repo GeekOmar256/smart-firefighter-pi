@@ -1,0 +1,40 @@
+; systemd unit for the AI-Based Firefighter Assistance System.
+;
+; Install on the Raspberry Pi:
+;
+;   sudo cp deploy/smart-firefighter.service /etc/systemd/system/
+;   sudo systemctl daemon-reload
+;   sudo systemctl enable --now smart-firefighter
+;   systemctl status smart-firefighter
+;
+; This unit is what makes the "restart" and "update" commands work: the Pi
+; restarts the service, and systemd starts it again with the new code.
+;
+; Adjust User and the paths if you did not clone into /home/pi.
+
+[Unit]
+Description=Smart Firefighter Assistance System
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/smart-firefighter-pi
+
+Environment=REPO_DIR=/home/pi/smart-firefighter-pi
+Environment=SERVICE_NAME=smart-firefighter
+Environment=FIREBASE_CREDENTIALS=/home/pi/.config/smart-firefighter/service-account.json
+Environment=FIREBASE_DATABASE_URL=https://water-analysis-2dy4ar-default-rtdb.firebaseio.com
+; Give the Pi a stable name so the controller always addresses the same device.
+Environment=DEVICE_ID=raspberrypi
+
+ExecStart=/home/pi/smart-firefighter-pi/.venv/bin/python3 /home/pi/smart-firefighter-pi/v3_remote.py
+
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

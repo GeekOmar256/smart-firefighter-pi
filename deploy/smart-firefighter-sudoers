@@ -1,0 +1,15 @@
+# Lets the program restart itself and reboot the Pi without a password, which
+# is what the "restart", "update" and "reboot" commands need.
+#
+# Install with visudo so a typo cannot lock you out of sudo:
+#
+#   sudo cp deploy/smart-firefighter-sudoers /etc/sudoers.d/smart-firefighter
+#   sudo chmod 0440 /etc/sudoers.d/smart-firefighter
+#   sudo visudo -c
+#
+# Only these three exact commands are allowed. Change "pi" if the service runs
+# as a different user.
+
+pi ALL=(root) NOPASSWD: /bin/systemctl restart smart-firefighter
+pi ALL=(root) NOPASSWD: /bin/systemctl stop smart-firefighter
+pi ALL=(root) NOPASSWD: /sbin/reboot

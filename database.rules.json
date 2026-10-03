@@ -1,0 +1,37 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "smart_firefighter": {
+      "devices": {
+        "$device_id": {
+          "status": {
+            ".read": "auth != null",
+            ".write": "auth != null && auth.uid == 'device:' + $device_id",
+            ".validate": "newData.hasChildren(['device_id', 'last_seen'])"
+          },
+
+          "commands": {
+            ".read": "auth != null",
+            "$command_id": {
+              ".write": "auth != null",
+              ".validate": "newData.hasChildren(['action', 'status'])",
+              "action": {
+                ".validate": "newData.isString() && newData.val().matches(/^(ping|update|restart|reboot|set_config)$/)"
+              },
+              "status": {
+                ".validate": "newData.isString() && newData.val().matches(/^(pending|running|done|error)$/)"
+              }
+            }
+          },
+
+          "config": {
+            ".read": "auth != null",
+            ".write": "auth != null"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------
+# Secrets. This repository is public - nothing here may be committed.
+# ---------------------------------------------------------------
+*service-account*.json
+*serviceAccount*.json
+*-firebase-adminsdk-*.json
+firebase-debug.log
+.firebaserc
+.env
+.env.*
+*.pem
+*.key
+
+# ---------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# ---------------------------------------------------------------
+# Editors and operating systems
+# ---------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------
+# Captured output
+# ---------------------------------------------------------------
+*.mjpg
+captures/
