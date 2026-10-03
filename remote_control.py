@@ -36,6 +36,7 @@ CREDENTIALS_PATH = os.environ.get(
     str(Path.home() / ".config" / "smart-firefighter" / "service-account.json"),
 )
 DEFAULT_DEVICE = os.environ.get("DEVICE_ID", "raspberrypi")
+CONTROLLER_UID = os.environ.get("CONTROLLER_UID", "controller")
 
 ROOT_PATH = "/smart_firefighter/devices"
 ONLINE_WITHIN_SECONDS = 30
@@ -51,9 +52,16 @@ def connect() -> None:
             "(Project settings > Service accounts > Generate new private key), "
             "or point FIREBASE_CREDENTIALS at it."
         )
+    # Connect as a named uid rather than as a full administrator. A plain
+    # service account bypasses the security rules entirely; with an auth
+    # override the rules in database.rules.json apply here too, so the
+    # action allowlist is enforced by the database and not only by the Pi.
     firebase_admin.initialize_app(
         credentials.Certificate(str(key_file)),
-        {"databaseURL": DATABASE_URL},
+        {
+            "databaseURL": DATABASE_URL,
+            "databaseAuthVariableOverride": {"uid": CONTROLLER_UID},
+        },
     )
 
 

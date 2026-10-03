@@ -210,9 +210,20 @@ The rules in `database.rules.json` are already deployed. They say:
 
 - nothing in the database is readable or writable without signing in
 - a device may only write **its own** status node, enforced by its uid
-- a command's `action` must be one of the five allowed names, so an unknown
-  action cannot even be written into the queue
+- a command's `action` must be one of the five allowed names
 
-The Pi connects with `databaseAuthVariableOverride`, which means it acts as
-`device:<device_id>` and the rules still apply to it, instead of connecting as
-a full administrator that bypasses them.
+Both the Pi and `remote_control.py` connect with `databaseAuthVariableOverride`,
+so they act as `device:<device_id>` and `controller` and the rules apply to
+them. Without that override, a service account connects as a full
+administrator and **bypasses the rules completely** — which is worth knowing if
+you write your own script against this database.
+
+That bypass is why the five allowed actions are also checked a second time on
+the Pi itself, in `COMMAND_HANDLERS`. Anything else is answered with
+`unknown action` and never runs, whatever managed to get written into the
+queue. The database rules are the outer fence; the handler allowlist is the
+one that actually decides what executes.
+
+Verified so far: unauthenticated reads and writes are rejected by the live
+rules. The per-action validation has not been exercised end to end yet,
+because that needs the service account key (see the note in the handover).
