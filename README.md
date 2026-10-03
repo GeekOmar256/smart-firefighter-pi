@@ -224,6 +224,13 @@ the Pi itself, in `COMMAND_HANDLERS`. Anything else is answered with
 queue. The database rules are the outer fence; the handler allowlist is the
 one that actually decides what executes.
 
-Verified so far: unauthenticated reads and writes are rejected by the live
-rules. The per-action validation has not been exercised end to end yet,
-because that needs the service account key (see the note in the handover).
+All of this has been tested against the live database:
+
+| Attempt | Result |
+|---|---|
+| Read or write with no credentials | rejected |
+| Command with `action` of `ping`, `update`, `set_config` | accepted |
+| Command with `action` of `exec` or `rm -rf /` | rejected |
+| Device writing its own status node | accepted |
+| Device writing **another** device's status node | rejected |
+| Status missing the required fields | rejected |
