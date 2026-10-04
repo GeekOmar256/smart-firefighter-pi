@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import io
 import math
+import os
 import sys
 import threading
 import time
@@ -38,7 +39,7 @@ JPEG_QUALITY = 85
 # The MLX90640 sends one half of the image at a time, so a complete frame
 # arrives at about half this rate. 8 Hz gives a clean image; 16 Hz is faster
 # but noisier.
-REFRESH_HZ = 8
+REFRESH_HZ = int(os.environ.get("REFRESH_HZ", "8"))
 
 FLIP_HORIZONTAL = True      # set to match how the board is mounted
 FLIP_VERTICAL = False
@@ -224,6 +225,12 @@ def capture_loop(camera) -> None:
             # getFrame() raises this when the I2C bus drops data. It is normal
             # once in a while; only a long run of failures is a real problem.
             failures += 1
+            if failures == 10:
+                print("[camera] frames keep failing. The usual cause is the I2C bus")
+                print("[camera] still running at 100 kHz. Add this to")
+                print("[camera]   /boot/firmware/config.txt   ->  dtparam=i2c_arm_baudrate=1000000")
+                print("[camera] then reboot. Run check_camera.py to confirm.")
+                print("[camera] As a stop-gap, try:  REFRESH_HZ=2 python3 ...")
             if failures % 10 == 0:
                 print(f"[camera] {failures} dropped frames ({error})")
             continue

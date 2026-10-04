@@ -28,6 +28,9 @@ Environment=FIREBASE_CREDENTIALS=/home/pi/.config/smart-firefighter/service-acco
 Environment=FIREBASE_DATABASE_URL=https://water-analysis-2dy4ar-default-rtdb.firebaseio.com
 ; Give the Pi a stable name so the controller always addresses the same device.
 Environment=DEVICE_ID=raspberrypi
+; Lower this if the camera drops frames because the I2C bus is slow.
+; Run check_camera.py to find the fastest rate that works.
+Environment=REFRESH_HZ=8
 
 ExecStart=/home/pi/smart-firefighter-pi/.venv/bin/python3 /home/pi/smart-firefighter-pi/v3_remote.py
 

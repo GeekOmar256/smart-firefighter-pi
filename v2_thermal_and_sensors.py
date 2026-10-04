@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import io
 import math
+import os
 import sys
 import threading
 import time
@@ -42,7 +43,7 @@ DISPLAY_WIDTH = 640
 DISPLAY_HEIGHT = 480
 JPEG_QUALITY = 85
 
-REFRESH_HZ = 8
+REFRESH_HZ = int(os.environ.get("REFRESH_HZ", "8"))
 
 FLIP_HORIZONTAL = True
 FLIP_VERTICAL = False
@@ -328,6 +329,12 @@ def capture_loop(camera) -> None:
             frame = camera.read()
         except RuntimeError as error:
             failures += 1
+            if failures == 10:
+                print("[camera] frames keep failing. The usual cause is the I2C bus")
+                print("[camera] still running at 100 kHz. Add this to")
+                print("[camera]   /boot/firmware/config.txt   ->  dtparam=i2c_arm_baudrate=1000000")
+                print("[camera] then reboot. Run check_camera.py to confirm.")
+                print("[camera] As a stop-gap, try:  REFRESH_HZ=2 python3 ...")
             if failures % 10 == 0:
                 print(f"[camera] {failures} dropped frames ({error})")
             continue

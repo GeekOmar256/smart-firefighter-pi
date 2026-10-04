@@ -56,6 +56,12 @@ def capture_loop(camera) -> None:
             frame = camera.read()
         except RuntimeError as error:
             failures += 1
+            if failures == 10:
+                print("[camera] frames keep failing. The usual cause is the I2C bus")
+                print("[camera] still running at 100 kHz. Add this to")
+                print("[camera]   /boot/firmware/config.txt   ->  dtparam=i2c_arm_baudrate=1000000")
+                print("[camera] then reboot. Run check_camera.py to confirm.")
+                print("[camera] As a stop-gap, try:  REFRESH_HZ=2 python3 ...")
             if failures % 10 == 0:
                 print(f"[camera] {failures} dropped frames ({error})")
             continue
