@@ -7,9 +7,17 @@
 #   sudo chmod 0440 /etc/sudoers.d/smart-firefighter
 #   sudo visudo -c
 #
-# Only these three exact commands are allowed. Change "pi" if the service runs
-# as a different user.
+# IMPORTANT: replace "pi" with your own username if it is different. Check with
+# "whoami". On recent Raspberry Pi OS the account is the one you chose during
+# setup, which is often not "pi".
+#
+# Both /bin and /usr/bin are listed because Raspberry Pi OS Bookworm keeps
+# these binaries in /usr/bin and /usr/sbin, while older releases used /bin and
+# /sbin. Listing both means the rule matches either way.
 
 pi ALL=(root) NOPASSWD: /bin/systemctl restart smart-firefighter
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl restart smart-firefighter
 pi ALL=(root) NOPASSWD: /bin/systemctl stop smart-firefighter
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl stop smart-firefighter
 pi ALL=(root) NOPASSWD: /sbin/reboot
+pi ALL=(root) NOPASSWD: /usr/sbin/reboot
