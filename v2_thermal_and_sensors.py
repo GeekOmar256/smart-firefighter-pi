@@ -62,9 +62,20 @@ FLAME_SENSOR_PINS = tuple(
 )
 GAS_SENSOR_PIN = int(os.environ.get("GAS_SENSOR_PIN", "23"))   # MQ-2 D0
 
-# These modules pull their D0 output LOW when they detect something.
-# Set to False if your modules behave the other way round.
-SENSORS_ACTIVE_LOW = True
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+# Which pin level counts as "detected". The two modules are not the same:
+# the MQ-2 pulls D0 LOW when it detects gas, while the flame module on this
+# board drives D0 HIGH when it sees a flame. Flip the matching value if an
+# indicator reads backwards.
+FLAME_ACTIVE_LOW = _env_bool("FLAME_ACTIVE_LOW", False)
+GAS_ACTIVE_LOW = _env_bool("GAS_ACTIVE_LOW", True)
 
 # A reading must stay the same for this long before the indicator changes.
 # It stops the indicators flickering on a noisy threshold.
@@ -174,11 +185,12 @@ class DigitalSensor:
     chip rather than on the main processor.
     """
 
-    def __init__(self, name: str, pin: int) -> None:
+    def __init__(self, name: str, pin: int, active_low: bool = True) -> None:
         from gpiozero import DigitalInputDevice
 
         self.name = name
         self.pin = pin
+        self.active_low = active_low
         # active_state=True means .value simply reports the pin level; the
         # active-low handling is done below so it stays easy to read.
         self._device = DigitalInputDevice(pin, pull_up=None, active_state=True)
@@ -190,7 +202,7 @@ class DigitalSensor:
 
     def _raw(self) -> bool:
         level = bool(self._device.value)
-        return (not level) if SENSORS_ACTIVE_LOW else level
+        return (not level) if self.active_low else level
 
     def poll(self) -> bool:
         """Read the pin and apply the debounce. Returns the settled state."""
@@ -512,7 +524,12 @@ async function refresh() {
     document.getElementById('fps').textContent    = s.fps;
 
     let html = '';
-    t.flame.forEach((v, i) => { html += chip('Flame sensor ' + (i + 1), v); });
+    // With a single sensor fitted there is nothing to number, so the label
+    // stays "Flame sensor"; a second one makes both numbered again.
+    const many = t.flame.length > 1;
+    t.flame.forEach((v, i) => {
+      html += chip(many ? 'Flame sensor ' + (i + 1) : 'Flame sensor', v);
+    });
     html += chip('Gas / smoke', t.gas);
     document.getElementById('chips').innerHTML = html;
 
@@ -582,10 +599,16 @@ def build_hardware(simulate: bool):
         return camera, flame, gas
 
     camera = ThermalCamera()
-    flame = [DigitalSensor(f"flame{i + 1}", pin) for i, pin in enumerate(FLAME_SENSOR_PINS)]
-    gas = DigitalSensor("gas", GAS_SENSOR_PIN)
+    flame = [
+        DigitalSensor(f"flame{i + 1}", pin, active_low=FLAME_ACTIVE_LOW)
+        for i, pin in enumerate(FLAME_SENSOR_PINS)
+    ]
+    gas = DigitalSensor("gas", GAS_SENSOR_PIN, active_low=GAS_ACTIVE_LOW)
     pins = ", ".join(str(p) for p in FLAME_SENSOR_PINS)
-    print(f"[sensors] flame on GPIO {pins}, gas on GPIO {GAS_SENSOR_PIN}")
+    print(f"[sensors] flame on GPIO {pins} "
+          f"(detect = {'LOW' if FLAME_ACTIVE_LOW else 'HIGH'}), "
+          f"gas on GPIO {GAS_SENSOR_PIN} "
+          f"(detect = {'LOW' if GAS_ACTIVE_LOW else 'HIGH'})")
     return camera, flame, gas
 
 

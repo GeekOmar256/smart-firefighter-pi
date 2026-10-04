@@ -93,7 +93,7 @@ Near the top of each file:
 | `FLIP_HORIZONTAL` / `FLIP_VERTICAL` | Match the image to how the board is mounted. |
 | `MIN_SPAN_C` | Smallest temperature range the colour scale may use, so a flat scene does not become amplified noise. |
 | `FLAME_SENSOR_PINS`, `GAS_SENSOR_PIN` | Which GPIO pins the sensors use. Default 24 and 23. Both can be set from the environment. |
-| `SENSORS_ACTIVE_LOW` | `True` if the modules pull D0 low when they detect something, which is the usual behaviour. |
+| `FLAME_ACTIVE_LOW`, `GAS_ACTIVE_LOW` | Which pin level counts as a detection. The MQ-2 pulls D0 **low** on gas (`GAS_ACTIVE_LOW=1`), while the flame module drives D0 **high** on a flame (`FLAME_ACTIVE_LOW=0`). Flip the matching one if an indicator reads backwards. |
 
 ## Note on the Pi 5 and GPIO
 

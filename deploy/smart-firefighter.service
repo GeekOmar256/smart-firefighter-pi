@@ -35,6 +35,10 @@ Environment=REFRESH_HZ=8
 ; if a second flame sensor is added.
 Environment=FLAME_SENSOR_PINS=24
 Environment=GAS_SENSOR_PIN=23
+; Which pin level means "detected". The flame module drives D0 high on a
+; flame; the MQ-2 pulls D0 low on gas. Flip one if it reads backwards.
+Environment=FLAME_ACTIVE_LOW=0
+Environment=GAS_ACTIVE_LOW=1
 
 ExecStart=/home/pi/smart-firefighter-pi/.venv/bin/python3 /home/pi/smart-firefighter-pi/v3_remote.py
 
