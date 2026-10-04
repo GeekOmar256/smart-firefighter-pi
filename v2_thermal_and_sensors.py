@@ -318,6 +318,24 @@ store = FrameStore()
 sensors = SensorState()
 
 
+def explain_frame_failures(error: Exception) -> None:
+    """Say what a run of failed frames usually means, based on which error."""
+    print("[camera] frames keep failing.")
+    if isinstance(error, ValueError):
+        print("[camera] The readings are arriving corrupted. That normally means")
+        print("[camera] the I2C bus is running FASTER than the wiring can carry.")
+        print("[camera] Try 400000 in /boot/firmware/config.txt instead of 1000000:")
+        print("[camera]     dtparam=i2c_arm_baudrate=400000")
+        print("[camera] Short, firmly seated wires matter a lot at these speeds.")
+    else:
+        print("[camera] The sensor is not delivering frames in time, which")
+        print("[camera] normally means the I2C bus is too SLOW. Add to")
+        print("[camera] /boot/firmware/config.txt:")
+        print("[camera]     dtparam=i2c_arm_baudrate=400000")
+    print("[camera] Reboot, then run check_camera.py to confirm.")
+    print("[camera] As a stop-gap, try:  REFRESH_HZ=2 python3 ...")
+
+
 def capture_loop(camera) -> None:
     """Read the camera forever and push rendered frames into the store."""
     failures = 0
@@ -327,14 +345,15 @@ def capture_loop(camera) -> None:
     while True:
         try:
             frame = camera.read()
-        except RuntimeError as error:
+        except (RuntimeError, ValueError, OSError) as error:
+            # RuntimeError: the sensor had no frame ready in time.
+            # ValueError:   the driver got numbers it cannot use, because the
+            #               data arrived corrupted ("math domain error").
+            # Either way one frame is lost. Neither is worth giving up for, so
+            # this must not fall through to the handler below.
             failures += 1
             if failures == 10:
-                print("[camera] frames keep failing. The usual cause is the I2C bus")
-                print("[camera] still running at 100 kHz. Add this to")
-                print("[camera]   /boot/firmware/config.txt   ->  dtparam=i2c_arm_baudrate=1000000")
-                print("[camera] then reboot. Run check_camera.py to confirm.")
-                print("[camera] As a stop-gap, try:  REFRESH_HZ=2 python3 ...")
+                explain_frame_failures(error)
             if failures % 10 == 0:
                 print(f"[camera] {failures} dropped frames ({error})")
             continue

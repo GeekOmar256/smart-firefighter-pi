@@ -29,6 +29,7 @@ from v2_thermal_and_sensors import (
     FrameStore,
     SensorState,
     build_hardware,
+    explain_frame_failures,
     frame_to_jpeg,
 )
 
@@ -54,14 +55,15 @@ def capture_loop(camera) -> None:
     while True:
         try:
             frame = camera.read()
-        except RuntimeError as error:
+        except (RuntimeError, ValueError, OSError) as error:
+            # RuntimeError: the sensor had no frame ready in time.
+            # ValueError:   the driver got numbers it cannot use, because the
+            #               data arrived corrupted ("math domain error").
+            # Either way one frame is lost. Neither is worth giving up for, so
+            # this must not fall through to the handler below.
             failures += 1
             if failures == 10:
-                print("[camera] frames keep failing. The usual cause is the I2C bus")
-                print("[camera] still running at 100 kHz. Add this to")
-                print("[camera]   /boot/firmware/config.txt   ->  dtparam=i2c_arm_baudrate=1000000")
-                print("[camera] then reboot. Run check_camera.py to confirm.")
-                print("[camera] As a stop-gap, try:  REFRESH_HZ=2 python3 ...")
+                explain_frame_failures(error)
             if failures % 10 == 0:
                 print(f"[camera] {failures} dropped frames ({error})")
             continue

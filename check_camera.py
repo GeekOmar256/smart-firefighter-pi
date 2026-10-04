@@ -57,13 +57,13 @@ def describe_speed(hz: int | None) -> None:
 
     if hz < 400_000:
         print()
-        print("  >> This is the problem. The bus is too slow for this sensor.")
-        print("     Add this line to /boot/firmware/config.txt and reboot:")
-        print("         dtparam=i2c_arm_baudrate=1000000")
-    elif hz < 1_000_000:
-        print("  (workable, but 1000000 is recommended)")
+        print("  >> Too slow for this sensor. Add to /boot/firmware/config.txt")
+        print("     and reboot:   dtparam=i2c_arm_baudrate=400000")
+    elif hz <= 400_000:
+        print("  (good - this is the speed to aim for)")
     else:
-        print("  (good)")
+        print("  (fast. Fine with short wires, but if frames come back")
+        print("   corrupted, drop to 400000 - see the verdict below.)")
 
 
 def main() -> int:
@@ -97,11 +97,11 @@ def main() -> int:
         return 1
 
     print("\n3. Reading frames")
-    print(f"  {'rate':>6}  {'ok':>5}  {'failed':>7}  {'avg time':>9}")
-    print("  " + "-" * 32)
+    print(f"  {'rate':>6}  {'ok':>5}  {'timed out':>9}  {'corrupt':>9}  {'avg time':>9}")
+    print("  " + "-" * 50)
 
     frame = [0.0] * 768
-    results: dict[int, tuple[int, int, float]] = {}
+    results: dict[int, tuple[int, int, int, float]] = {}
 
     for rate in RATES_TO_TRY:
         try:
@@ -110,7 +110,7 @@ def main() -> int:
             continue
 
         time.sleep(0.5)                          # let the new rate settle
-        ok = failed = 0
+        ok = slow = corrupt = 0
         elapsed = 0.0
 
         for _ in range(FRAMES_PER_TEST):
@@ -120,20 +120,39 @@ def main() -> int:
                 ok += 1
                 elapsed += time.monotonic() - start
             except (RuntimeError, OSError):
-                failed += 1
+                slow += 1          # no frame ready in time
+            except ValueError:
+                corrupt += 1       # data arrived mangled: "math domain error"
 
         average = (elapsed / ok * 1000.0) if ok else 0.0
-        results[rate] = (ok, failed, average)
-        print(f"  {rate:>4} Hz  {ok:>5}  {failed:>7}  {average:>7.0f} ms")
+        results[rate] = (ok, slow, corrupt, average)
+        print(f"  {rate:>4} Hz  {ok:>5}  {slow:>9}  {corrupt:>9}  {average:>7.0f} ms")
 
     print("\n4. Verdict")
-    working = [rate for rate, (ok, failed, _) in results.items() if ok and not failed]
+    working = [r for r, (ok, slow, bad, _) in results.items()
+               if ok and not slow and not bad]
+    corrupt_total = sum(bad for _, _, bad, _ in results.values())
+    slow_total = sum(slow for _, slow, _, _ in results.values())
+
+    if corrupt_total and speed and speed > 400_000:
+        print(f"  {corrupt_total} frames came back corrupted (\"math domain error\").")
+        print(f"  The bus is at {speed / 1000:.0f} kHz, which is faster than the")
+        print("  wiring can carry cleanly. Change /boot/firmware/config.txt to:")
+        print("      dtparam=i2c_arm_baudrate=400000")
+        print("  then reboot and run this again. Reseat the SDA and SCL wires")
+        print("  too: at this speed one loose jumper is enough to cause it.")
+        if not working:
+            return 1
+        print()
 
     if not working:
-        print("  No refresh rate worked.")
-        print("  The bus speed is almost certainly the cause - see section 1.")
-        print("  Check the wiring too: long or loose jumper wires on SDA/SCL")
-        print("  cause exactly this failure.")
+        if slow_total and (not speed or speed < 400_000):
+            print("  No rate worked, and the bus is slow. Set")
+            print("      dtparam=i2c_arm_baudrate=400000")
+            print("  in /boot/firmware/config.txt and reboot.")
+        else:
+            print("  No refresh rate worked. Check the SDA and SCL wiring:")
+            print("  long or loose jumper wires cause exactly this.")
         return 1
 
     best = max(working)
