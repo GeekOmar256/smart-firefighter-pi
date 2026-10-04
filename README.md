@@ -19,12 +19,17 @@ AI-Based Firefighter Assistance System (FYP2) — Raspberry Pi 5 (8 GB).
 | SDA | GPIO 2 / SDA (pin 3) |
 | SCL | GPIO 3 / SCL (pin 5) |
 
-**Flame sensors** — power them from **3.3 V** so the D0 output is safe for the Pi.
+**Flame sensor** — power it from **3.3 V** so the D0 output is safe for the Pi.
 
 | Sensor | Raspberry Pi |
 |---|---|
-| Flame 1 D0 | GPIO 17 |
-| Flame 2 D0 | GPIO 27 |
+| VCC | 3V3 |
+| GND | GND |
+| D0 | GPIO 24 (pin 18) |
+
+One flame sensor is fitted. To add a second, set
+`FLAME_SENSOR_PINS=24,27` and wire it to that pin; the program and the web page
+follow the list automatically.
 
 **MQ-2 gas sensor** — needs 5 V for its heater.
 
@@ -32,7 +37,7 @@ AI-Based Firefighter Assistance System (FYP2) — Raspberry Pi 5 (8 GB).
 |---|---|
 | VCC | 5V (pin 2) |
 | GND | GND |
-| D0 | GPIO 22 **through a level shifter or resistor divider** |
+| D0 | GPIO 23 (pin 16) **through a level shifter or resistor divider** |
 
 > The MQ-2 D0 output is 5 V. The Pi GPIO pins accept only 3.3 V and can be
 > permanently damaged. Do not connect D0 straight to the Pi.
@@ -87,7 +92,7 @@ Near the top of each file:
 | `REFRESH_HZ` | 8 gives a clean image, 16 is faster but noisier. A full frame arrives at about half this rate. |
 | `FLIP_HORIZONTAL` / `FLIP_VERTICAL` | Match the image to how the board is mounted. |
 | `MIN_SPAN_C` | Smallest temperature range the colour scale may use, so a flat scene does not become amplified noise. |
-| `FLAME_SENSOR_PINS`, `GAS_SENSOR_PIN` | Which GPIO pins the sensors use (v2). |
+| `FLAME_SENSOR_PINS`, `GAS_SENSOR_PIN` | Which GPIO pins the sensors use. Default 24 and 23. Both can be set from the environment. |
 | `SENSORS_ACTIVE_LOW` | `True` if the modules pull D0 low when they detect something, which is the usual behaviour. |
 
 ## Note on the Pi 5 and GPIO

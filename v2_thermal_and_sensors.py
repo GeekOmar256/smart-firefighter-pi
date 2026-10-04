@@ -51,8 +51,16 @@ FLIP_VERTICAL = False
 MIN_SPAN_C = 5.0
 
 # BCM pin numbers
-FLAME_SENSOR_PINS = (17, 27)        # the two flame sensor D0 outputs
-GAS_SENSOR_PIN = 22                 # MQ-2 D0, through a level shifter
+# BCM pin numbers, matching how the board is actually wired. Both can be
+# overridden from the environment, so the pins can be changed without editing
+# this file:  FLAME_SENSOR_PINS=24,27  GAS_SENSOR_PIN=23  python3 ...
+#
+# One flame sensor is fitted. To add a second, list both pins separated by a
+# comma; the rest of the program and the web page follow the list length.
+FLAME_SENSOR_PINS = tuple(
+    int(pin) for pin in os.environ.get("FLAME_SENSOR_PINS", "24").split(",") if pin.strip()
+)
+GAS_SENSOR_PIN = int(os.environ.get("GAS_SENSOR_PIN", "23"))   # MQ-2 D0
 
 # These modules pull their D0 output LOW when they detect something.
 # Set to False if your modules behave the other way round.

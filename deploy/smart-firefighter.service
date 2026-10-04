@@ -31,6 +31,10 @@ Environment=DEVICE_ID=raspberrypi
 ; Lower this if the camera drops frames because the I2C bus is slow.
 ; Run check_camera.py to find the fastest rate that works.
 Environment=REFRESH_HZ=8
+; Which GPIO pins the sensors are wired to. Comma-separate FLAME_SENSOR_PINS
+; if a second flame sensor is added.
+Environment=FLAME_SENSOR_PINS=24
+Environment=GAS_SENSOR_PIN=23
 
 ExecStart=/home/pi/smart-firefighter-pi/.venv/bin/python3 /home/pi/smart-firefighter-pi/v3_remote.py
 
