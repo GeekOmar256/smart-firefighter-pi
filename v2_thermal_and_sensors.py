@@ -186,6 +186,7 @@ class DigitalSensor:
         self._state = False
         self._pending = False
         self._pending_since = 0.0
+        self._closed = False
 
     def _raw(self) -> bool:
         level = bool(self._device.value)
@@ -193,7 +194,18 @@ class DigitalSensor:
 
     def poll(self) -> bool:
         """Read the pin and apply the debounce. Returns the settled state."""
-        reading = self._raw()
+        # The polling thread is a daemon, so on shutdown it can still be in
+        # here after main() has closed the devices. Reading a closed gpiozero
+        # device raises, which looked like a crash on Ctrl-C.
+        if self._closed:
+            return self._state
+
+        try:
+            reading = self._raw()
+        except Exception:                        # noqa: BLE001
+            self._closed = True
+            return self._state
+
         now = time.monotonic()
 
         if reading != self._pending:
@@ -209,6 +221,7 @@ class DigitalSensor:
         return self._state
 
     def close(self) -> None:
+        self._closed = True                      # stop poll() touching it first
         self._device.close()
 
 
