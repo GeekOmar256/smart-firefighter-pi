@@ -23,6 +23,7 @@ import time
 import numpy as np
 from flask import Flask, Response, jsonify, render_template_string
 from PIL import Image
+from scipy import ndimage
 
 # --------------------------------------------------------------------------
 # Configuration
@@ -48,6 +49,18 @@ FLIP_VERTICAL = False
 # frame. This is the smallest temperature span it is allowed to use, so a flat
 # scene does not turn into amplified noise.
 MIN_SPAN_C = 5.0
+
+# Light smoothing before colouring. The MLX90640 reads the image as two
+# interleaved checkerboard halves, so noise and movement show up as a dotted
+# pattern. A small Gaussian blur removes it. A median filter would too, but it
+# also erases anything only one or two pixels wide. 0 turns it off.
+DENOISE_SIGMA = float(os.environ.get("DENOISE_SIGMA", "0.6"))
+
+# Set FIXED_SCALE=1 to colour every frame on the same SCALE_MIN_C..SCALE_MAX_C
+# range, so the same colour always means the same temperature.
+FIXED_SCALE = os.environ.get("FIXED_SCALE", "0").strip().lower() in ("1", "true", "yes", "on")
+SCALE_MIN_C = float(os.environ.get("SCALE_MIN_C", "15"))
+SCALE_MAX_C = float(os.environ.get("SCALE_MAX_C", "45"))
 
 HOST = "0.0.0.0"
 PORT = 5000
@@ -156,12 +169,17 @@ def frame_to_jpeg(frame: np.ndarray) -> bytes:
         frame = np.fliplr(frame)
     if FLIP_VERTICAL:
         frame = np.flipud(frame)
+    if DENOISE_SIGMA > 0:
+        frame = ndimage.gaussian_filter(frame, sigma=DENOISE_SIGMA, mode="nearest")
 
-    low = float(frame.min())
-    high = float(frame.max())
-    if high - low < MIN_SPAN_C:                 # keep a sensible colour scale
-        middle = (high + low) / 2.0
-        low, high = middle - MIN_SPAN_C / 2.0, middle + MIN_SPAN_C / 2.0
+    if FIXED_SCALE:
+        low, high = SCALE_MIN_C, SCALE_MAX_C
+    else:
+        low = float(frame.min())
+        high = float(frame.max())
+        if high - low < MIN_SPAN_C:             # keep a sensible colour scale
+            middle = (high + low) / 2.0
+            low, high = middle - MIN_SPAN_C / 2.0, middle + MIN_SPAN_C / 2.0
 
     normalised = (frame - low) / (high - low)
     indexes = np.clip(normalised * 255.0, 0, 255).astype(np.uint8)

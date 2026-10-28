@@ -5,7 +5,9 @@ AI-Based Firefighter Assistance System (FYP2) — Raspberry Pi 5 (8 GB).
 | File | What it does |
 |---|---|
 | `v1_thermal_camera.py` | Thermal camera only. Shows the live thermal image on a web page. |
-| `v2_thermal_and_sensors.py` | Version 1 plus the flame sensors and the gas sensor, with an indicator for each. |
+| `v2_thermal_and_sensors.py` | Version 1 plus the flame sensors and the gas sensor, with an indicator for each, human detection, and recording of training data. |
+| `human_detection.py` | Finds people and fires in the thermal image. |
+| `dataset_recorder.py` | Saves labelled raw frames for training a model. |
 | `requirements.txt` | The Python packages needed. Python 3.12 / 3.13. |
 
 ## Wiring
@@ -79,7 +81,7 @@ Both scripts take `--simulate`, which replaces the camera and the sensors with
 fake ones. This lets you work on the web page from a laptop:
 
 ```bash
-pip install Flask numpy Pillow
+pip install Flask numpy Pillow scipy
 python3 v1_thermal_camera.py --simulate
 ```
 
@@ -94,6 +96,42 @@ Near the top of each file:
 | `MIN_SPAN_C` | Smallest temperature range the colour scale may use, so a flat scene does not become amplified noise. |
 | `FLAME_SENSOR_PINS`, `GAS_SENSOR_PIN` | Which GPIO pins the sensors use. Default 24 and 23. Both can be set from the environment. |
 | `FLAME_ACTIVE_LOW`, `GAS_ACTIVE_LOW` | Which pin level counts as a detection. The MQ-2 pulls D0 **low** on gas (`GAS_ACTIVE_LOW=1`), while the flame module drives D0 **high** on a flame (`FLAME_ACTIVE_LOW=0`). Flip the matching one if an indicator reads backwards. |
+| `DENOISE_SIGMA` | Smoothing before colouring and detection, which removes the dotted checkerboard pattern. Default 0.6, `0` turns it off. |
+| `FIXED_SCALE` | `1` colours every frame on the same `SCALE_MIN_C`..`SCALE_MAX_C` range (default 15-45 °C), so a colour always means the same temperature. |
+
+## Human detection (versions 2 and 3)
+
+`human_detection.py` looks for people and fires in every thermal frame and
+draws a box around each one on the live image. The page gets a
+**Person (thermal)** and a **Fire (thermal)** indicator.
+
+It is a rule-based detector taken from the Helmet project and corrected:
+
+- a pixel is warm when it is **warmer than the room**, not only inside a fixed
+  28-42 °C window, so a hot room does not become one big "person";
+- the confidence score decides: below `HUMAN_MIN_CONFIDENCE` (0.5) it is not a person;
+- the smallest person is 6 pixels instead of 50, so people a few metres away count;
+- the warm halo around a heater or other hot object is rejected;
+- "person present" needs 3 of the last 5 frames, so it does not flicker.
+
+It is the baseline for the machine-learning model. It cannot tell a person
+from a warm object of the same size and temperature (a laptop, the wearer's own
+hand), which is what the trained model is for. Thresholds can be changed from
+the environment: `HUMAN_TEMP_MIN_C`, `HUMAN_TEMP_MAX_C`, `HUMAN_CONTRAST_C`,
+`HUMAN_MIN_PIXELS`, `HUMAN_MIN_CONFIDENCE`, `FIRE_TEMP_MIN_C`.
+
+## Recording training data
+
+The **Record training data** panel at the bottom of the page saves the raw
+temperatures while the program runs (only one program can read the camera at a
+time). Pick what the camera sees, add a note such as the distance, press
+**Start**, and **Stop** when done.
+
+Sessions are saved in `~/smart-firefighter-recordings/<label>/<date-time>/`
+(change with `RECORD_DIR`), as `chunk_*.npz` files of (N, 24, 32) temperatures
+in °C plus a `session.json`. `dataset_recorder.load_session(folder)` reads one
+back. Record every label, including `empty_room`, `hot_object` and `own_hand`:
+the model learns as much from what is *not* a person.
 
 ## Note on the Pi 5 and GPIO
 

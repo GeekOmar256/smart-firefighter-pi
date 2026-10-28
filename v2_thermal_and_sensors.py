@@ -4,6 +4,10 @@ Version 1 plus the flame sensors and the gas sensor. The web page shows the
 live thermal image and an indicator for each sensor that turns red when
 something is detected.
 
+The thermal image is also searched for people and fires (human_detection.py),
+with a box drawn around each one, and the page can record labelled raw frames
+for training a model (dataset_recorder.py).
+
     python3 v2_thermal_and_sensors.py              # on the Raspberry Pi
     python3 v2_thermal_and_sensors.py --simulate   # anywhere, no hardware needed
 
@@ -28,8 +32,12 @@ import threading
 import time
 
 import numpy as np
-from flask import Flask, Response, jsonify, render_template_string
-from PIL import Image
+from flask import Flask, Response, jsonify, render_template_string, request
+from PIL import Image, ImageDraw, ImageFont
+from scipy import ndimage
+
+from dataset_recorder import LABELS, Recorder
+from human_detection import Detector
 
 # --------------------------------------------------------------------------
 # Configuration
@@ -76,6 +84,22 @@ def _env_bool(name: str, default: bool) -> bool:
 # indicator reads backwards.
 FLAME_ACTIVE_LOW = _env_bool("FLAME_ACTIVE_LOW", False)
 GAS_ACTIVE_LOW = _env_bool("GAS_ACTIVE_LOW", True)
+
+# Light smoothing before colouring and detection. The MLX90640 reads the image
+# as two interleaved checkerboard halves, so noise and movement show up as a
+# dotted pattern. A small Gaussian blur removes it. A median filter would too,
+# but it also erases a person only one or two pixels wide. 0 turns it off.
+DENOISE_SIGMA = float(os.environ.get("DENOISE_SIGMA", "0.6"))
+
+# Off: the colours stretch between the coldest and hottest pixel of each frame,
+# which gives the most contrast. On: every frame uses SCALE_MIN_C..SCALE_MAX_C,
+# so the same colour always means the same temperature.
+FIXED_SCALE = _env_bool("FIXED_SCALE", False)
+SCALE_MIN_C = float(os.environ.get("SCALE_MIN_C", "15"))
+SCALE_MAX_C = float(os.environ.get("SCALE_MAX_C", "45"))
+
+# Boxes around detected people and fires on the live image.
+SHOW_DETECTIONS = _env_bool("SHOW_DETECTIONS", True)
 
 # A reading must stay the same for this long before the indicator changes.
 # It stops the indicators flickering on a noisy threshold.
@@ -265,18 +289,57 @@ class SimulatedSensor:
 # Rendering
 # --------------------------------------------------------------------------
 
-def frame_to_jpeg(frame: np.ndarray) -> bytes:
-    """Turn a temperature array into a coloured, enlarged JPEG image."""
+def orient(frame: np.ndarray) -> np.ndarray:
+    """Flip the frame to match how the board is mounted."""
     if FLIP_HORIZONTAL:
         frame = np.fliplr(frame)
     if FLIP_VERTICAL:
         frame = np.flipud(frame)
+    return np.ascontiguousarray(frame)
 
-    low = float(frame.min())
-    high = float(frame.max())
-    if high - low < MIN_SPAN_C:
-        middle = (high + low) / 2.0
-        low, high = middle - MIN_SPAN_C / 2.0, middle + MIN_SPAN_C / 2.0
+
+def denoise(frame: np.ndarray) -> np.ndarray:
+    if DENOISE_SIGMA <= 0:
+        return frame
+    return ndimage.gaussian_filter(frame, sigma=DENOISE_SIGMA, mode="nearest")
+
+
+DETECTION_COLOURS = {"human": (60, 255, 120), "fire": (255, 60, 0)}
+LABEL_FONT = ImageFont.load_default(size=15)
+
+
+def draw_detections(image: Image.Image, detections: list[dict]) -> None:
+    """Draw a labelled box around each detection, scaled to the display."""
+    sx = image.width / SENSOR_WIDTH
+    sy = image.height / SENSOR_HEIGHT
+    draw = ImageDraw.Draw(image)
+
+    for det in detections:
+        colour = DETECTION_COLOURS.get(det["type"], (255, 255, 255))
+        x0, y0 = det["x"] * sx, det["y"] * sy
+        x1, y1 = (det["x"] + det["w"]) * sx - 1, (det["y"] + det["h"]) * sy - 1
+        draw.rectangle([x0, y0, x1, y1], outline=colour, width=3)
+
+        if det["type"] == "fire":
+            text = f"FIRE {det['temp_max']:.0f} C"
+        else:
+            text = f"PERSON {det['confidence'] * 100:.0f}%"
+        width = draw.textlength(text, font=LABEL_FONT) + 10
+        top = y0 - 20 if y0 >= 20 else y1 + 1      # above the box, or below at the top edge
+        draw.rectangle([x0, top, x0 + width, top + 19], fill=colour)
+        draw.text((x0 + 5, top + 2), text, font=LABEL_FONT, fill=(0, 0, 0))
+
+
+def frame_to_jpeg(frame: np.ndarray, detections: list[dict] | None = None) -> bytes:
+    """Turn an oriented temperature array into a coloured, enlarged JPEG."""
+    if FIXED_SCALE:
+        low, high = SCALE_MIN_C, SCALE_MAX_C
+    else:
+        low = float(frame.min())
+        high = float(frame.max())
+        if high - low < MIN_SPAN_C:
+            middle = (high + low) / 2.0
+            low, high = middle - MIN_SPAN_C / 2.0, middle + MIN_SPAN_C / 2.0
 
     normalised = (frame - low) / (high - low)
     indexes = np.clip(normalised * 255.0, 0, 255).astype(np.uint8)
@@ -285,10 +348,32 @@ def frame_to_jpeg(frame: np.ndarray) -> bytes:
     image = Image.fromarray(coloured, mode="RGB").resize(
         (DISPLAY_WIDTH, DISPLAY_HEIGHT), Image.BICUBIC
     )
+    if detections and SHOW_DETECTIONS:
+        draw_detections(image, detections)
 
     output = io.BytesIO()
     image.save(output, format="JPEG", quality=JPEG_QUALITY)
     return output.getvalue()
+
+
+def process_frame(raw: np.ndarray, detector: Detector, recorder: Recorder) -> tuple[bytes, dict]:
+    """Everything done to one camera frame. Returns the JPEG and its stats."""
+    frame = orient(raw)
+    recorder.add(frame)                  # the measured temperatures, not smoothed
+    smooth = denoise(frame)
+    found = detector.update(smooth)
+
+    stats = {
+        "min_c": round(float(frame.min()), 1),
+        "max_c": round(float(frame.max()), 1),
+        "centre_c": round(float(frame[SENSOR_HEIGHT // 2, SENSOR_WIDTH // 2]), 1),
+        "human": found["human"],
+        "human_count": found["human_count"],
+        "fire_thermal": found["fire_thermal"],
+        "background_c": found["background_c"],
+        "detections": found["detections"],
+    }
+    return frame_to_jpeg(smooth, found["detections"]), stats
 
 
 # --------------------------------------------------------------------------
@@ -347,8 +432,20 @@ class SensorState:
         }
 
 
+def recorder_settings() -> dict:
+    """Saved with every recording, so a model knows how the frames were taken."""
+    return {
+        "refresh_hz": REFRESH_HZ,
+        "flip_horizontal": FLIP_HORIZONTAL,
+        "flip_vertical": FLIP_VERTICAL,
+        "sensor": "MLX90640",
+    }
+
+
 store = FrameStore()
 sensors = SensorState()
+detector = Detector()
+recorder = Recorder(settings=recorder_settings())
 
 
 def explain_frame_failures(error: Exception) -> None:
@@ -402,13 +499,9 @@ def capture_loop(camera) -> None:
         if interval > 0:
             fps = 0.8 * fps + 0.2 * (1.0 / interval) if fps else 1.0 / interval
 
-        stats = {
-            "min_c": round(float(frame.min()), 1),
-            "max_c": round(float(frame.max()), 1),
-            "centre_c": round(float(frame[SENSOR_HEIGHT // 2, SENSOR_WIDTH // 2]), 1),
-            "fps": round(fps, 1),
-        }
-        store.publish(frame_to_jpeg(frame), stats)
+        jpeg, stats = process_frame(frame, detector, recorder)
+        stats["fps"] = round(fps, 1)
+        store.publish(jpeg, stats)
 
 
 def sensor_loop(flame_sensors: list, gas_sensor) -> None:
@@ -445,7 +538,7 @@ PAGE = """<!doctype html>
 <title>Firefighter Assistance</title>
 <style>
   :root { --bg:#12141a; --panel:#1b1e26; --line:#2b303b; --text:#e8eaf0;
-          --muted:#9aa3b2; --ok:#2e9e6b; --alarm:#e5484d; }
+          --muted:#9aa3b2; --ok:#2e9e6b; --alarm:#e5484d; --person:#3cff78; }
   * { box-sizing: border-box; }
   body { margin:0; padding:24px 16px; background:var(--bg); color:var(--text);
          font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -460,6 +553,7 @@ PAGE = """<!doctype html>
             font-weight: 650; letter-spacing: .02em; text-align: center;
             border: 1px solid var(--line); background: var(--panel); color: var(--muted); }
   .banner.alarm { background: var(--alarm); border-color: var(--alarm); color:#fff; }
+  .banner.person { background: var(--person); border-color: var(--person); color:#06210f; }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
           gap: 10px; margin-top: 10px; }
@@ -468,6 +562,7 @@ PAGE = """<!doctype html>
   .dot { width: 13px; height: 13px; border-radius: 50%; background: var(--ok);
          flex: 0 0 auto; }
   .chip.on .dot { background: var(--alarm); }
+  .chip.on.person .dot { background: var(--person); }
   .chip .name { font-size: .82rem; color: var(--muted); }
   .chip .val  { font-size: .95rem; font-weight: 600; }
 
@@ -479,6 +574,23 @@ PAGE = """<!doctype html>
                  letter-spacing: .06em; }
   .stat .value { font-size: 1.3rem; font-weight: 650; margin-top: 2px;
                  font-variant-numeric: tabular-nums; }
+
+  .rec { margin-top: 10px; }
+  .rec .head { display:flex; justify-content:space-between; align-items:baseline;
+               gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .rec .title { color: var(--muted); font-size: .72rem; text-transform: uppercase;
+                letter-spacing: .06em; }
+  .rec .state { font-size: .85rem; font-variant-numeric: tabular-nums; }
+  .rec .state.live { color: var(--alarm); font-weight: 650; }
+  .rec .row { display:flex; gap: 8px; flex-wrap: wrap; }
+  .rec select, .rec input { flex: 1 1 160px; min-width: 0; padding: 9px 10px;
+               border-radius: 8px; border: 1px solid var(--line);
+               background: var(--bg); color: var(--text); font: inherit; }
+  .rec button { flex: 0 0 auto; padding: 9px 18px; border-radius: 8px; border: 0;
+               background: var(--ok); color: #fff; font: inherit; font-weight: 650;
+               cursor: pointer; }
+  .rec button.stop { background: var(--alarm); }
+  .rec .totals { margin-top: 10px; color: var(--muted); font-size: .8rem; }
 </style>
 </head>
 <body>
@@ -498,14 +610,29 @@ PAGE = """<!doctype html>
     <div class="stat"><div class="label">Centre</div><div class="value" id="centre">--</div></div>
     <div class="stat"><div class="label">Frames/s</div><div class="value" id="fps">--</div></div>
   </div>
+
+  <div class="card rec">
+    <div class="head">
+      <span class="title">Record training data</span>
+      <span class="state" id="rec-state">Idle</span>
+    </div>
+    <div class="row">
+      <select id="rec-label" aria-label="What the camera sees">
+        {% for label in labels %}<option value="{{ label }}">{{ label.replace('_', ' ') }}</option>{% endfor %}
+      </select>
+      <input id="rec-note" maxlength="200" placeholder="Note: distance, pose, room" aria-label="Note">
+      <button id="rec-btn" type="button">Start</button>
+    </div>
+    <div class="totals" id="rec-totals"></div>
+  </div>
 </div>
 
 <script>
-function chip(name, on) {
-  return '<div class="chip' + (on ? ' on' : '') + '">' +
+function chip(name, on, kind, text) {
+  return '<div class="chip' + (on ? ' on' : '') + (kind ? ' ' + kind : '') + '">' +
          '<span class="dot"></span><div>' +
          '<div class="name">' + name + '</div>' +
-         '<div class="val">' + (on ? 'DETECTED' : 'Clear') + '</div>' +
+         '<div class="val">' + (text || (on ? 'DETECTED' : 'Clear')) + '</div>' +
          '</div></div>';
 }
 
@@ -531,34 +658,112 @@ async function refresh() {
       html += chip(many ? 'Flame sensor ' + (i + 1) : 'Flame sensor', v);
     });
     html += chip('Gas / smoke', t.gas);
+    html += chip('Fire (thermal)', s.fire_thermal);
+    html += chip('Person (thermal)', s.human, 'person',
+                 s.human ? 'DETECTED (' + s.human_count + ')' : 'None');
     document.getElementById('chips').innerHTML = html;
 
+    // A hazard outranks a person: the banner shows the more urgent of the two.
+    const hazard = t.alarm || s.fire_thermal;
     const banner = document.getElementById('banner');
-    banner.classList.toggle('alarm', t.alarm);
-    banner.textContent = t.alarm ? 'WARNING - hazard detected' : 'All clear';
+    banner.classList.toggle('alarm', hazard);
+    banner.classList.toggle('person', !hazard && s.human);
+    banner.textContent = hazard ? 'WARNING - hazard detected'
+                       : s.human ? 'Person detected' : 'All clear';
   } catch (e) { /* keep the last values on a hiccup */ }
 }
 refresh();
 setInterval(refresh, 400);
+
+// ---- recording training data ----
+const recBtn = document.getElementById('rec-btn');
+const recLabel = document.getElementById('rec-label');
+const recNote = document.getElementById('rec-note');
+const recState = document.getElementById('rec-state');
+let recording = false;
+
+async function refreshRecording() {
+  try {
+    const r = await fetch('/api/record', { cache: 'no-store' });
+    const s = await r.json();
+    recording = s.recording;
+    recBtn.textContent = recording ? 'Stop' : 'Start';
+    recBtn.classList.toggle('stop', recording);
+    recLabel.disabled = recNote.disabled = recording;
+    recState.classList.toggle('live', recording);
+    recState.textContent = recording
+      ? 'REC ' + s.session.label.replace(/_/g, ' ') + ' - ' +
+        s.session.frames + ' frames, ' + Math.round(s.session.seconds) + ' s'
+      : 'Idle';
+    const parts = Object.entries(s.totals).map(([k, v]) => k.replace(/_/g, ' ') + ': ' + v);
+    document.getElementById('rec-totals').textContent =
+      parts.length ? 'Recorded so far (frames) - ' + parts.join(', ') : 'Nothing recorded yet';
+  } catch (e) { /* try again next tick */ }
+}
+
+recBtn.addEventListener('click', async () => {
+  recBtn.disabled = true;
+  try {
+    await fetch(recording ? '/api/record/stop' : '/api/record/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: recLabel.value, note: recNote.value })
+    });
+  } finally {
+    recBtn.disabled = false;
+    refreshRecording();
+  }
+});
+refreshRecording();
+setInterval(refreshRecording, 1000);
 </script>
 </body>
 </html>
 """
 
 
+EMPTY_STATS = {
+    "min_c": 0, "max_c": 0, "centre_c": 0, "fps": 0,
+    "human": False, "human_count": 0, "fire_thermal": False, "detections": [],
+}
+
+
+def add_recording_routes(flask_app: Flask, rec: Recorder) -> None:
+    """The recording panel's endpoints. Version 3 adds them to its own app."""
+
+    @flask_app.route("/api/record")
+    def api_record():
+        return jsonify(rec.status())
+
+    @flask_app.route("/api/record/start", methods=["POST"])
+    def api_record_start():
+        body = request.get_json(silent=True) or {}
+        try:
+            return jsonify(rec.start(str(body.get("label", "")), str(body.get("note", ""))))
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+
+    @flask_app.route("/api/record/stop", methods=["POST"])
+    def api_record_stop():
+        return jsonify(rec.stop())
+
+
 @app.route("/")
 def index():
-    return render_template_string(PAGE)
+    return render_template_string(PAGE, labels=LABELS)
 
 
 @app.route("/api/stats")
 def api_stats():
-    return jsonify(store.stats or {"min_c": 0, "max_c": 0, "centre_c": 0, "fps": 0})
+    return jsonify(store.stats or EMPTY_STATS)
 
 
 @app.route("/api/status")
 def api_status():
     return jsonify(sensors.snapshot)
+
+
+add_recording_routes(app, recorder)
 
 
 def mjpeg_stream():
@@ -648,6 +853,7 @@ def main() -> int:
     try:
         app.run(host=HOST, port=args.port, threaded=True, debug=False)
     finally:
+        recorder.stop()                          # write out a session left running
         for sensor in flame_sensors:
             sensor.close()
         gas_sensor.close()

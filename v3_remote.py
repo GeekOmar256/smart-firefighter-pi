@@ -22,15 +22,18 @@ import time
 
 from flask import Flask, Response, jsonify, render_template_string
 
+from dataset_recorder import LABELS, Recorder
+from human_detection import Detector
 from v2_thermal_and_sensors import (
+    EMPTY_STATS,
     PAGE,
-    SENSOR_HEIGHT,
-    SENSOR_WIDTH,
     FrameStore,
     SensorState,
+    add_recording_routes,
     build_hardware,
     explain_frame_failures,
-    frame_to_jpeg,
+    process_frame,
+    recorder_settings,
 )
 
 HOST = "0.0.0.0"
@@ -39,6 +42,8 @@ SENSOR_POLL_HZ = 20
 
 store = FrameStore()
 sensors = SensorState()
+detector = Detector()
+recorder = Recorder(settings=recorder_settings())
 cloud = None
 
 
@@ -79,13 +84,9 @@ def capture_loop(camera) -> None:
         if interval > 0:
             fps = 0.8 * fps + 0.2 * (1.0 / interval) if fps else 1.0 / interval
 
-        stats = {
-            "min_c": round(float(frame.min()), 1),
-            "max_c": round(float(frame.max()), 1),
-            "centre_c": round(float(frame[SENSOR_HEIGHT // 2, SENSOR_WIDTH // 2]), 1),
-            "fps": round(fps, 1),
-        }
-        store.publish(frame_to_jpeg(frame), stats)
+        jpeg, stats = process_frame(frame, detector, recorder)
+        stats["fps"] = round(fps, 1)
+        store.publish(jpeg, stats)
 
 
 def sensor_loop(flame_sensors: list, gas_sensor) -> None:
@@ -125,6 +126,11 @@ def status_for_cloud() -> dict:
             "gas": state["gas"],
             "alarm": state["alarm"],
         },
+        "detection": {
+            "human": stats.get("human", False),
+            "human_count": stats.get("human_count", 0),
+            "fire_thermal": stats.get("fire_thermal", False),
+        },
     }
 
 
@@ -137,17 +143,20 @@ app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return render_template_string(PAGE)
+    return render_template_string(PAGE, labels=LABELS)
 
 
 @app.route("/api/stats")
 def api_stats():
-    return jsonify(store.stats or {"min_c": 0, "max_c": 0, "centre_c": 0, "fps": 0})
+    return jsonify(store.stats or EMPTY_STATS)
 
 
 @app.route("/api/status")
 def api_status():
     return jsonify(sensors.snapshot)
+
+
+add_recording_routes(app, recorder)
 
 
 @app.route("/api/health")
@@ -231,6 +240,7 @@ def main() -> int:
     try:
         app.run(host=HOST, port=args.port, threaded=True, debug=False)
     finally:
+        recorder.stop()                          # write out a session left running
         for sensor in flame_sensors:
             sensor.close()
         gas_sensor.close()

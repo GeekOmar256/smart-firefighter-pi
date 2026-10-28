@@ -36,3 +36,6 @@ desktop.ini
 # ---------------------------------------------------------------
 *.mjpg
 captures/
+
+# Recorded training data, if RECORD_DIR is pointed inside the repository
+recordings/

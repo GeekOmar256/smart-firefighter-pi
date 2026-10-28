@@ -9,6 +9,7 @@
 Flask>=3.1.0
 numpy>=2.1.0          # 2.1 is the first release with Python 3.13 wheels
 Pillow>=11.0.0        # 11.0 is the first release with Python 3.13 wheels
+scipy>=1.14.1         # smoothing and heat-cluster labelling; 1.14.1 has Python 3.13 wheels
 
 # --- thermal camera, MLX90640 over I2C (Raspberry Pi only) ---
 # Leave these out when you only want to run with --simulate on a laptop.
