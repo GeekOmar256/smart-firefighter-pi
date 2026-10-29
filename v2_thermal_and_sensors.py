@@ -36,8 +36,14 @@ from flask import Flask, Response, jsonify, render_template_string, request
 from PIL import Image, ImageDraw, ImageFont
 from scipy import ndimage
 
+import alerts as alert_settings
+from alerts import AlertManager
 from dataset_recorder import LABELS, Recorder
-from human_detection import Detector
+from human_detection import Detector, detect
+from settings_store import settings
+import snapshots as snapshots_module
+from snapshots import SnapshotStore
+from web_settings import add_settings_routes
 
 # --------------------------------------------------------------------------
 # Configuration
@@ -333,7 +339,7 @@ def draw_detections(image: Image.Image, detections: list[dict]) -> None:
 def frame_to_jpeg(frame: np.ndarray, detections: list[dict] | None = None) -> bytes:
     """Turn an oriented temperature array into a coloured, enlarged JPEG."""
     if FIXED_SCALE:
-        low, high = SCALE_MIN_C, SCALE_MAX_C
+        low, high = SCALE_MIN_C, max(SCALE_MAX_C, SCALE_MIN_C + 1.0)
     else:
         low = float(frame.min())
         high = float(frame.max())
@@ -356,8 +362,19 @@ def frame_to_jpeg(frame: np.ndarray, detections: list[dict] | None = None) -> by
     return output.getvalue()
 
 
-def process_frame(raw: np.ndarray, detector: Detector, recorder: Recorder) -> tuple[bytes, dict]:
-    """Everything done to one camera frame. Returns the JPEG and its stats."""
+def render_frame(frame: np.ndarray) -> bytes:
+    """A stored frame as a picture, with what the detector finds in it now.
+    Used by the recordings browser on the settings page."""
+    smooth = denoise(np.asarray(frame, dtype=np.float32))
+    detections, _ = detect(smooth)
+    return frame_to_jpeg(smooth, detections)
+
+
+def process_frame(
+    raw: np.ndarray, detector: Detector, recorder: Recorder
+) -> tuple[bytes, dict, np.ndarray]:
+    """Everything done to one camera frame. Returns the JPEG, its stats and
+    the oriented temperatures."""
     frame = orient(raw)
     recorder.add(frame)                  # the measured temperatures, not smoothed
     smooth = denoise(frame)
@@ -373,7 +390,7 @@ def process_frame(raw: np.ndarray, detector: Detector, recorder: Recorder) -> tu
         "background_c": found["background_c"],
         "detections": found["detections"],
     }
-    return frame_to_jpeg(smooth, found["detections"]), stats
+    return frame_to_jpeg(smooth, found["detections"]), stats, frame
 
 
 # --------------------------------------------------------------------------
@@ -386,15 +403,30 @@ class FrameStore:
     def __init__(self) -> None:
         self._condition = threading.Condition()
         self._jpeg: bytes | None = None
+        self._frame: np.ndarray | None = None
         self._stats: dict = {}
         self._sequence = 0
+        self._published_at = time.monotonic()
 
-    def publish(self, jpeg: bytes, stats: dict) -> None:
+    def publish(self, jpeg: bytes, stats: dict, frame: np.ndarray | None = None) -> None:
         with self._condition:
             self._jpeg = jpeg
+            self._frame = frame
             self._stats = stats
             self._sequence += 1
+            self._published_at = time.monotonic()
             self._condition.notify_all()
+
+    def latest(self) -> tuple[bytes | None, np.ndarray | None, dict]:
+        """The newest picture, its temperatures and its stats, for a snapshot."""
+        with self._condition:
+            return self._jpeg, self._frame, dict(self._stats)
+
+    @property
+    def age(self) -> float:
+        """Seconds since the last frame arrived."""
+        with self._condition:
+            return time.monotonic() - self._published_at
 
     def wait_for_next(self, last_seen: int, timeout: float = 5.0):
         with self._condition:
@@ -448,6 +480,61 @@ detector = Detector()
 recorder = Recorder(settings=recorder_settings())
 
 
+def _register_settings() -> None:
+    me = sys.modules[__name__]
+    group = "Thermal image"
+    settings.register(me, "DENOISE_SIGMA", "Smoothing", group, "float", 0, 2, 0.1,
+                      "Removes the dotted pattern. 0 = off. Above 1 blurs small people away.")
+    settings.register(me, "FIXED_SCALE", "Fixed colour scale", group, "bool",
+                      help="Off: colours stretch to each frame. On: the range below.")
+    settings.register(me, "SCALE_MIN_C", "Fixed scale: coldest", group, "float", -20, 100, 1, "C")
+    settings.register(me, "SCALE_MAX_C", "Fixed scale: hottest", group, "float", 0, 400, 1, "C")
+    settings.register(me, "MIN_SPAN_C", "Smallest colour range", group, "float", 1, 30, 0.5,
+                      "C. Stops a flat scene turning into amplified noise.")
+    settings.register(me, "SHOW_DETECTIONS", "Draw boxes on the image", group, "bool")
+    settings.register(me, "DEBOUNCE_SECONDS", "Flame and gas sensor debounce", "Sensors",
+                      "float", 0, 2, 0.05, "Seconds a reading must hold before it counts.")
+
+
+_register_settings()
+
+
+def alert_conditions(frames: FrameStore, readings: SensorState) -> dict[str, bool]:
+    """Which alert conditions are true right now."""
+    stats = frames.stats
+    state = readings.snapshot
+    background = stats.get("background_c")
+    cpu = alert_settings.cpu_temperature_c()
+    return {
+        "flame": state["flame_any"],
+        "gas": state["gas"],
+        "fire_thermal": bool(stats.get("fire_thermal")),
+        "high_heat": background is not None and background >= alert_settings.HIGH_HEAT_C,
+        "person": bool(stats.get("human")),
+        "camera_fault": frames.age > alert_settings.CAMERA_FAULT_S,
+        "device_overheat": cpu is not None and cpu >= alert_settings.DEVICE_OVERHEAT_C,
+    }
+
+
+def start_services(flask_app: Flask, frames: FrameStore, readings: SensorState,
+                   rec: Recorder) -> AlertManager:
+    """Sound alerts, snapshots and the settings page. Version 3 uses it too."""
+    alerts = AlertManager()
+    snapshots = SnapshotStore()
+
+    def snapshot_on_alert(event: str, level: str) -> None:
+        if level != "info" and snapshots_module.AUTO_SNAPSHOT:
+            jpeg, frame, stats = frames.latest()
+            snapshots.save(jpeg, frame, event, stats)
+
+    alerts.on_alert(snapshot_on_alert)
+    add_settings_routes(flask_app, store=frames, recorder=rec, alerts=alerts,
+                        snapshots=snapshots, render=render_frame)
+    alerts.start()
+    alerts.watch(lambda: alert_conditions(frames, readings))
+    return alerts
+
+
 def explain_frame_failures(error: Exception) -> None:
     """Say what a run of failed frames usually means, based on which error."""
     print("[camera] frames keep failing.")
@@ -499,9 +586,9 @@ def capture_loop(camera) -> None:
         if interval > 0:
             fps = 0.8 * fps + 0.2 * (1.0 / interval) if fps else 1.0 / interval
 
-        jpeg, stats = process_frame(frame, detector, recorder)
+        jpeg, stats, oriented = process_frame(frame, detector, recorder)
         stats["fps"] = round(fps, 1)
-        store.publish(jpeg, stats)
+        store.publish(jpeg, stats, oriented)
 
 
 def sensor_loop(flame_sensors: list, gas_sensor) -> None:
@@ -575,6 +662,8 @@ PAGE = """<!doctype html>
   .stat .value { font-size: 1.3rem; font-weight: 650; margin-top: 2px;
                  font-variant-numeric: tabular-nums; }
 
+  .settings-link { float: right; color: var(--text); font-size: .85rem; text-decoration: none;
+                   border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; }
   .rec { margin-top: 10px; }
   .rec .head { display:flex; justify-content:space-between; align-items:baseline;
                gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
@@ -595,6 +684,7 @@ PAGE = """<!doctype html>
 </head>
 <body>
 <div class="wrap">
+  <a class="settings-link" href="/settings">Settings</a>
   <h1>Firefighter Assistance System</h1>
   <p class="sub">Thermal camera, flame sensors and gas sensor &mdash; live view</p>
 
@@ -848,6 +938,7 @@ def main() -> int:
     threading.Thread(
         target=sensor_loop, args=(flame_sensors, gas_sensor), daemon=True
     ).start()
+    start_services(app, store, sensors, recorder)
 
     print(f"[web] open http://<raspberry-pi-ip>:{args.port} in a browser")
     try:

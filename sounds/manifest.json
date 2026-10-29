@@ -1,0 +1,74 @@
+{
+  "flame": {
+    "level": "critical",
+    "text": "Warning! Flame detected. Move away from the flame.",
+    "voice": "onyx",
+    "model": "gpt-4o-mini-tts",
+    "seconds": 4.94,
+    "generated": "2026-10-29"
+  },
+  "gas": {
+    "level": "critical",
+    "text": "Warning! Gas or smoke detected. Check your breathing apparatus.",
+    "voice": "onyx",
+    "model": "gpt-4o-mini-tts",
+    "seconds": 6.29,
+    "generated": "2026-10-29"
+  },
+  "fire_thermal": {
+    "level": "critical",
+    "text": "Warning! Fire detected by the thermal camera.",
+    "voice": "onyx",
+    "model": "gpt-4o-mini-tts",
+    "seconds": 4.69,
+    "generated": "2026-10-29"
+  },
+  "high_heat": {
+    "level": "critical",
+    "text": "Danger! Extreme heat around you. Withdraw to a safer area.",
+    "voice": "onyx",
+    "model": "gpt-4o-mini-tts",
+    "seconds": 6.09,
+    "generated": "2026-10-29"
+  },
+  "person": {
+    "level": "warning",
+    "text": "Attention. Person detected ahead. Check for a casualty.",
+    "voice": "onyx",
+    "model": "gpt-4o-mini-tts",
+    "seconds": 4.93,
+    "generated": "2026-10-29"
+  },
+  "camera_fault": {
+    "level": "warning",
+    "text": "Caution. The thermal camera is not responding.",
+    "voice": "onyx",
+    "model": "gpt-4o-mini-tts",
+    "seconds": 4.68,
+    "generated": "2026-10-29"
+  },
+  "device_overheat": {
+    "level": "warning",
+    "text": "Caution. The device is overheating.",
+    "voice": "onyx",
+    "model": "gpt-4o-mini-tts",
+    "seconds": 3.73,
+    "generated": "2026-10-29"
+  },
+  "all_clear": {
+    "level": "info",
+    "text": "Hazard cleared.",
+    "voice": "onyx",
+    "model": "gpt-4o-mini-tts",
+    "seconds": 2.15,
+    "generated": "2026-10-29"
+  },
+  "system_ready": {
+    "level": "info",
+    "text": "Firefighter assistance system ready.",
+    "voice": "onyx",
+    "model": "gpt-4o-mini-tts",
+    "seconds": 3.7,
+    "generated": "2026-10-29"
+  }
+}

@@ -28,6 +28,7 @@ import os
 import platform
 import socket
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -156,7 +157,10 @@ def cmd_update(link: "CloudLink", params: dict) -> dict:
         requirements = Path(REPO_DIR) / "requirements.txt"
         if requirements.exists():
             steps.append(run(
-                ["python3", "-m", "pip", "install", "-r", str(requirements)],
+                # sys.executable is the .venv this program runs in. Plain
+                # "python3" is the system Python, which Raspberry Pi OS
+                # refuses to install into, so the update never restarted.
+                [sys.executable, "-m", "pip", "install", "-r", str(requirements)],
                 cwd=REPO_DIR,
                 timeout=COMMAND_TIMEOUT_SECONDS,
             ))

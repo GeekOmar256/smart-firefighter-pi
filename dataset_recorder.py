@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from collections import Counter
@@ -50,6 +51,7 @@ RECORD_DIR = os.environ.get(
 
 CHUNK_FRAMES = 40          # about 10 s at 4 frames per second
 MAX_NOTE_LENGTH = 200
+SESSION_PATTERN = re.compile(r"^\d{8}-\d{6}(-\d+)?$")
 
 
 class Recorder:
@@ -154,6 +156,32 @@ class Recorder:
                 except (OSError, ValueError, KeyError):
                     continue
         return dict(counts)
+
+    def sessions(self) -> list[dict]:
+        """Every recorded session, newest first, for the browser page."""
+        found = []
+        if self.root.exists():
+            for meta in self.root.glob("*/*/session.json"):
+                try:
+                    data = json.loads(meta.read_text())
+                except (OSError, ValueError):
+                    continue
+                found.append({
+                    "label": meta.parent.parent.name,
+                    "session": meta.parent.name,
+                    "note": data.get("note", ""),
+                    "frames": int(data.get("frames", 0)),
+                    "started_at": data.get("started_at"),
+                })
+        found.sort(key=lambda s: s["started_at"] or 0, reverse=True)
+        return found
+
+    def session_folder(self, label: str, session: str) -> Path | None:
+        """The folder of one session, checked so no other path can be reached."""
+        if label not in LABELS or not SESSION_PATTERN.match(session):
+            return None
+        folder = self.root / label / session
+        return folder if (folder / "session.json").exists() else None
 
     # -- internals (call with the lock held) ------------------------------
 

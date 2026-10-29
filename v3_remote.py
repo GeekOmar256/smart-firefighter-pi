@@ -34,6 +34,7 @@ from v2_thermal_and_sensors import (
     explain_frame_failures,
     process_frame,
     recorder_settings,
+    start_services,
 )
 
 HOST = "0.0.0.0"
@@ -45,6 +46,7 @@ sensors = SensorState()
 detector = Detector()
 recorder = Recorder(settings=recorder_settings())
 cloud = None
+alert_manager = None
 
 
 # --------------------------------------------------------------------------
@@ -84,9 +86,9 @@ def capture_loop(camera) -> None:
         if interval > 0:
             fps = 0.8 * fps + 0.2 * (1.0 / interval) if fps else 1.0 / interval
 
-        jpeg, stats = process_frame(frame, detector, recorder)
+        jpeg, stats, oriented = process_frame(frame, detector, recorder)
         stats["fps"] = round(fps, 1)
-        store.publish(jpeg, stats)
+        store.publish(jpeg, stats, oriented)
 
 
 def sensor_loop(flame_sensors: list, gas_sensor) -> None:
@@ -131,6 +133,7 @@ def status_for_cloud() -> dict:
             "human_count": stats.get("human_count", 0),
             "fire_thermal": stats.get("fire_thermal", False),
         },
+        "alerts_active": alert_manager.status()["active"] if alert_manager else [],
     }
 
 
@@ -192,7 +195,7 @@ def stream():
 # --------------------------------------------------------------------------
 
 def main() -> int:
-    global cloud
+    global cloud, alert_manager
 
     parser = argparse.ArgumentParser(
         description="Thermal camera and sensors, with Firebase remote control"
@@ -222,6 +225,7 @@ def main() -> int:
     threading.Thread(target=capture_loop, args=(camera,), daemon=True).start()
     threading.Thread(target=sensor_loop,
                      args=(flame_sensors, gas_sensor), daemon=True).start()
+    alert_manager = start_services(app, store, sensors, recorder)
 
     if not args.no_cloud:
         try:

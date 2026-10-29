@@ -214,10 +214,15 @@ class Detector:
         people = sum(1 for d in detections if d["type"] == "human")
         fires = sum(1 for d in detections if d["type"] == "fire")
 
+        if self._human_history.maxlen != PERSIST_WINDOW:   # changed on the settings page
+            self._human_history = deque(self._human_history, maxlen=PERSIST_WINDOW)
+            self._fire_history = deque(self._fire_history, maxlen=PERSIST_WINDOW)
+        needed = min(PERSIST_NEEDED, PERSIST_WINDOW)
+
         self._human_history.append(people > 0)
         self._fire_history.append(fires > 0)
-        human = sum(self._human_history) >= PERSIST_NEEDED
-        fire = sum(self._fire_history) >= PERSIST_NEEDED
+        human = sum(self._human_history) >= needed
+        fire = sum(self._fire_history) >= needed
 
         if human != self._human:                 # a line in the log per change
             print(f"[detect] person: {'DETECTED (' + str(people) + ' in view)' if human else 'clear'}")
@@ -232,3 +237,41 @@ class Detector:
             "fire_thermal": fire,
             "background_c": round(background, 1),
         }
+
+
+# --------------------------------------------------------------------------
+# Adjustable from the settings page
+# --------------------------------------------------------------------------
+
+def _register_settings() -> None:
+    import sys
+
+    from settings_store import settings
+
+    me = sys.modules[__name__]
+    group = "Human detection"
+    settings.register(me, "HUMAN_CONTRAST_C", "Warmer than the room by", group, "float",
+                      0.5, 15, 0.5, "C. Lower finds people in hot rooms, higher gives fewer false boxes.")
+    settings.register(me, "HUMAN_MIN_CONFIDENCE", "Minimum confidence", group, "float",
+                      0, 1, 0.05, "0-1. A warm area scoring less is not reported as a person.")
+    settings.register(me, "HUMAN_MIN_PIXELS", "Smallest person (pixels)", group, "int",
+                      1, 300, 1, "Out of 768. About 6 is a person 4-5 m away.")
+    settings.register(me, "HUMAN_TEMP_MIN_C", "Coldest body pixel", group, "float",
+                      10, 35, 0.5, "C. Clothing seen from a distance reads 26-30 C.")
+    settings.register(me, "HUMAN_TEMP_MAX_C", "Hottest body pixel", group, "float",
+                      35, 60, 0.5, "C. Hotter than this is a hot object, not a person.")
+    settings.register(me, "BACKGROUND_PERCENTILE", "Room temperature percentile", group, "int",
+                      5, 50, 1, "Which percentile of the frame is taken as the room.")
+    settings.register(me, "PERSIST_WINDOW", "Frames to look back", group, "int",
+                      1, 20, 1, "Detection is steadied over this many frames.")
+    settings.register(me, "PERSIST_NEEDED", "Frames that must agree", group, "int",
+                      1, 20, 1, "Out of the frames above. Higher means slower but steadier.")
+
+    group = "Fire detection (thermal)"
+    settings.register(me, "FIRE_TEMP_MIN_C", "Fire temperature", group, "float",
+                      40, 300, 1, "C. Pixels at or above this count as fire.")
+    settings.register(me, "FIRE_MIN_PIXELS", "Smallest fire (pixels)", group, "int",
+                      1, 100, 1, "")
+
+
+_register_settings()

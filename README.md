@@ -8,6 +8,10 @@ AI-Based Firefighter Assistance System (FYP2) — Raspberry Pi 5 (8 GB).
 | `v2_thermal_and_sensors.py` | Version 1 plus the flame sensors and the gas sensor, with an indicator for each, human detection, and recording of training data. |
 | `human_detection.py` | Finds people and fires in the thermal image. |
 | `dataset_recorder.py` | Saves labelled raw frames for training a model. |
+| `alerts.py` | Plays the spoken sound alerts. |
+| `sounds/` | The alert sounds (WAV), made by `tools/generate_sounds.py`. |
+| `web_settings.py` | The settings page: thresholds, alerts, pictures, recordings. |
+| `settings_store.py`, `snapshots.py` | Saved settings, saved pictures. |
 | `requirements.txt` | The Python packages needed. Python 3.12 / 3.13. |
 
 ## Wiring
@@ -132,6 +136,58 @@ Sessions are saved in `~/smart-firefighter-recordings/<label>/<date-time>/`
 in °C plus a `session.json`. `dataset_recorder.load_session(folder)` reads one
 back. Record every label, including `empty_room`, `hot_object` and `own_hand`:
 the model learns as much from what is *not* a person.
+
+## Sound alerts
+
+The Pi speaks to the firefighter when something abnormal happens. Each alert
+is a warning tone (three beeps for critical, two for a warning, a chime for
+information) followed by a spoken message:
+
+| Alert | Level | When |
+|---|---|---|
+| Flame detected | critical | flame sensor |
+| Gas or smoke detected | critical | MQ-2 |
+| Fire seen by the thermal camera | critical | pixels above the fire temperature |
+| Dangerous heat | critical | room temperature above `HIGH_HEAT_C` (60 °C) |
+| Person detected | warning | human detection |
+| Thermal camera not responding | warning | no frame for `CAMERA_FAULT_S` |
+| Device overheating | warning | Pi CPU above `DEVICE_OVERHEAT_C` (80 °C) |
+| Hazard cleared | info | the last critical alert has ended |
+| System ready | info | start-up |
+
+A critical alert that stays on is repeated every 20 s, and the same alert
+never plays twice within 30 s. A picture is saved automatically on every
+warning or critical alert.
+
+The sounds are WAV files in `sounds/`, generated once with the OpenAI
+text-to-speech API by `tools/generate_sounds.py` (on a computer with
+`OPENAI_API_KEY` set). The Pi only plays the files, so it needs no key and no
+internet. To change a message, edit `MESSAGES` in that script and run it again.
+
+They play through `aplay`. **The Pi 5 has no headphone jack**: plug in a USB
+speaker or USB sound card, or use an HDMI screen with speakers. Find the
+device with `aplay -l` and, if it is not the default, set *Audio output
+device* on the settings page to e.g. `plughw:2,0`. Test with
+`aplay sounds/system_ready.wav`.
+
+## Settings page
+
+`http://<raspberry-pi-ip>:5000/settings`, or the **Settings** button on the
+live view:
+
+- **Thresholds**: human and fire detection, image smoothing and colour scale,
+  sensor debounce, alert temperatures and timings. Changes apply on the next
+  frame and are saved in `~/.config/smart-firefighter/settings.json`, so they
+  survive restarts and updates.
+- **Sound alerts**: switch each alert on or off, play it on the Pi or in the
+  browser, and see the recent alerts.
+- **Pictures**: take a picture now, and browse the ones saved on alerts
+  (`~/smart-firefighter-snapshots/`).
+- **Recordings**: step through recorded training sessions frame by frame, with
+  the boxes the detector finds using the current settings.
+
+There is no login, the same as the live view: anyone on the same network can
+change the settings.
 
 ## Note on the Pi 5 and GPIO
 
